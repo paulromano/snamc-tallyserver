@@ -83,7 +83,7 @@ hardware as well as the code being used and the model being simulated.
 \section{Parameter Sensitivity}
 
 The previous test cases~\cite{jcp-romano-2013} were targeted at depletion
-analysis of the Monte Carlo performance benchmark~\cite{mc2011-hoogenboom} on
+analysis of the Monte Carlo performance benchmark~\cite{mc-hoogenboom-2011} on
 two modern supercomputers: the Titan Cray XK7 at ORNL and Intrepid Blue Gene/P
 at ANL. In a depletion simulation, six reaction rates for each nuclide must be
 tallied each time a particle track crosses fuel. Furthermore, it is necessary to
@@ -97,8 +97,8 @@ surface crossings, re-evaluation of cross sections, tallying events, etc.
 
 To explicitly determine the effect of fuel subdivision on $f$ and $\mu$, a
 series of simulations were run using the OpenMC Monte Carlo
-code~\cite{ane-romano-2013} on a detailed full core PWR benchmark
-model~\cite{mc2013-horelik} varying the number of annular regions in the fuel
+code~\cite{ane-romano-2013} on the BEAVRS PWR benchmark
+model~\cite{mc-horelik-2013} varying the number of annular regions in the fuel
 from 1 to 10. The benchmark model includes accurate enrichment loadings,
 burnable absorber patterns, and control bank positions as well as
 faithfully-modeled axial grid spacers, core baffle structures, neutron shield
