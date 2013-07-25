@@ -5,14 +5,12 @@
 \usepackage{booktabs}  % nice rules (thick lines) for tables
 \usepackage{microtype} % improves typography for PDF
 
-\usepackage[breaklinks=true, linkcolor=black, citecolor=black]{hyperref}
+\usepackage[breaklinks=true, linkcolor=black, citecolor=black, urlcolor=black]{hyperref}
 \hypersetup{colorlinks=true,
   pdftitle={On the use of tally servers in Monte Carlo simulations of light-water
   reactors},
-  pdfauthor={Paul K. Romano, Benoit Forget, and Kord Smith}}
-
-% Add \unit macro
-\newcommand{\unit}[1]{\ensuremath{\, \mathrm{#1}}}
+  pdfauthor={Paul K. Romano, Benoit Forget, Kord Smith, and Andrew Siegel}}
+\usepackage[exponent-product=\cdot]{siunitx}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \title{On the use of tally servers in Monte Carlo simulations of light-water
@@ -21,20 +19,27 @@
 \author[1*]{Paul K. Romano}
 \author[1]{Benoit Forget}
 \author[1]{Kord Smith}
+\author[2]{Andrew Siegel}
 
 \affil[1]{Massachusetts Institute of Technology, Department of Nuclear Science
   and Engineering, 77 Massachusetts Avenue, Cambridge, MA 02139}
+\affil[2]{Argonne National Laboratory, Theory and Computing Sciences, 9700 S
+  Cass Ave., Argonne, IL 60439}
 \affil[*]{\footnotesize\normalfont Corresponding Author, E-mail:
   paul.k.romano@gmail.com}
 
-\abstract{An algorithm for decomposing tally data using servers has recently
-  been proposed and analyzed. In the present work, we investigate the impact of
-  subdividing fuel into annular segments on several parameters of a theoretical
-  model that predicts the overhead from using tally servers. The full paper will
-  also discuss the impact of survival biasing and weight cutoffs on these
-  parameters, the use of non-blocking communication in the tally server
-  implementation in OpenMC, and tests of the tally server algorithm using tens
-  to hundreds of thousands of processors.}
+\abstract{An algorithm for decomposing tally data in Monte Carlo simulations
+  using servers has recently been proposed and analyzed. In the present work, we
+  make a number of refinements to a theoretical performance model of the tally
+  server algorithm to better predict the performance of a realistic reactor
+  simulation using Monte Carlo. The impact of subdividing fuel into annular
+  segments on parameters of the performance model is evaluated and shown to
+  result in a predicted overhead of less than 20\% for the BEAVRS PWR benchmark
+  on the Mira Blue Gene/Q supercomputer. Additionally, a parameter space study
+  was performed comparing implementations of the tally server algorithm in the
+  OpenMC Monte Carlo code using blocking and non-blocking communication. The use
+  of non-blocking communication was shown to reduce the communication overhead
+  relative to blocking communication and can even result in negative overhead.}
 
 \keywords{Monte Carlo, data decomposition, tally server, LWR, OpenMC}
 
@@ -45,11 +50,18 @@
 Typical parallel implementations of Monte Carlo particle transport rely on full
 replication of the problem data on each process. This approach has been shown to
 be highly scalable~\cite{ane-romano-2013}, but does not lend itself to problems
-where the memory requirements exceed that of a single node such as the analysis
-of light-water reactors where tally data can exceed terabytes. Two methods of
-decomposing data and thereby reducing per-node memory requirements have been
-proposed previously: \emph{domain decomposition}~\cite{jcp-siegel-2012,
-  jcp-siegel-2013} and \emph{data decomposition}.
+where the memory requirements exceed that of a single node. For the realistic
+analysis of light-water reactors (LWRs), the memory requirements can be quite
+severe. Neutron interaction cross sections, which need to be stored for over 400
+nuclides at various temperatures, could consume up to 100 gigabytes of memory
+for a practical simulation. For a depletion calculation, the required tally
+memory could exceed 0.5 terabyte~\cite{jcp-siegel-2013}. A number of novel
+algorithms may enable simulations involving continuous temperature distributions
+to be performed using cross sections at 0 K~\cite{nse-yesilyurt-2012,
+  nse-viitanen-2012}. Two methods of decomposing tally data, and thereby
+reducing per-node memory requirements, have been proposed previously:
+\emph{domain decomposition}~\cite{jcp-siegel-2012, jcp-siegel-2013} and
+\emph{data decomposition}~\cite{trans-brown-2004}.
 
 In a recent paper~\cite{jcp-romano-2013}, Romano et al. demonstrate an
 implementation of data decomposition via a tally server algorithm and show that
@@ -57,39 +69,128 @@ it offers a viable means of performing full core light-water reactor simulations
 via Monte Carlo. A theoretical model was developed to predict the performance of
 a simulation using the tally server algorithm relative to a simulation based on
 full memory replication. The model depends on a number of machine-, code-, and
-problem-dependent parameters. For the sake of simplicity, some of the
-assumptions made in estimating these parameters were not conservative. In the
-present work, we revisit the assumptions made in~~\cite{jcp-romano-2013} to
-develop more realistic parameters for use in the theoretical model.
+problem-dependent parameters. In the present work, we revisit the derivation of
+the expected performance of the tally server and make refinements to a number of
+assumptions and parameters. The goal is to develop a more realistic expectation
+for the performance of of the tally server algorithm when applied to simulation
+of LWR problems.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Tally Server Model}
+\label{sec:model}
 
-In the previous work by Romano et al.~\cite{jcp-romano-2013}, it was shown that
-the relative increase in total simulation time due to using tally servers for
-decomposing tally memory is
+During a Monte Carlo simulation, estimates of physical parameters, referred to
+as \emph{tallies} are made by keeping running sums of scores from events such as
+collisions or particle tracks. Normally, tallies are stored in local
+memory. Synchronization between processors is typically performed only after
+simulating a predetermined number of particles, referred to as a
+\emph{batch}. However, since tally data is not needed for determining the random
+walk of a particle, it can be stored remotely.
+
+In the tally server algorithm, the tally data is stored in the address space of
+a process whose sole purpose is to receive scores from other processes (which we
+call \emph{tally servers}) and increment the tallies accordingly. Thus, a total
+of $p$ processes are divided into $c$ compute processes and $s$ tally
+servers. Each of the compute processes is assigned a set of particles that it
+will track. As particle tracking is simulated, an array of scores is sent to a
+tally server at each event that results in a contribution to a tally. Since all
+tally accumulation is performed on the server, the compute processes do not need
+to store the tallies in memory (other than meta-data describing the tally).
+
+The goal of the analysis here is to develop a model for for the expected time to
+simulate $N$ particles using the tally server algorithm relative to a simulation
+with no data decomposition. To that end, we first define a number of parameters:
+\begin{align*}
+  \mu &= \text{average time to simulate a single particle}, \\
+  f &= \text{number of tallying events per particle}, \\
+  d &= \text{bytes of tally data sent at each event}, \\
+  \alpha &= \text{effective application-level network latency}, \\
+  \beta &= \text{effective application-level inverse network bandwidth}
+\end{align*}
+The latency and inverse bandwidth are determined by the network interconnect;
+$f$, $\mu$, and $d$ will depend on the machine hardware as well as the code
+being used and the model being simulated. Thus, while these parameters may be
+hard to predict, they can easily be measured from an actual simulation. Once
+these parameters are known, we can develop a rough estimate for the
+time-to-solution with and without tally servers. In a normal simulation without
+tally servers, the expected time to simulate $N$ particles is, assuming perfect
+parallel scaling,
 \begin{equation}
-  \label{eq:delta}
-  \Delta = \frac{f}{\mu} \left ( \alpha + d\beta \right )
+  \label{eq:time-without}
+  t_0 = \frac{N\mu}{p}.
 \end{equation}
-where $\Delta$ is the overhead, $f$ is the number of scoring events per
-particle, $\mu$ is the average time to simulate a particle, $\alpha$ is the
-network latency, $d$ is the size of the tally scores per event, and $\beta$ is
-the inverse network bandwidth. The latency and inverse bandwidth are determined
-by the network interconnect; $f$, $\mu$, and $d$ will depend on the machine
-hardware as well as the code being used and the model being simulated.
+When the tally server algorithm is used, there are two sources that lead to of
+overhead: 1) availability of fewer processors to simulate particles and 2)
+network communication for tally data from compute processes to the servers. The
+expected simulation time when using tally servers is identical to the expression
+in \autoref{eq:time-without} but with $p$ replaced by $c$:
+\begin{equation}
+  \label{eq:time-with}
+  t_c = \frac{N\mu}{c}.
+\end{equation}
+Since $f(\alpha + d \beta)$ is the expected tally server communication time for
+one particle and $N/c$ is the number of particles per processor, the total
+expected communication time is
+\begin{equation}
+  \label{eq:time-send}
+  t_s = \frac{fN}{c} \left ( \alpha + d\beta \right ).
+\end{equation}
+We then define $t = t_c + t_s$ as the total simulation time using tally
+servers. Combining \autoref{eq:time-without}, \autoref{eq:time-with}, and
+\autoref{eq:time-send}, we obtain an expression relating the simulation time with
+and without tally servers
+\begin{equation}
+  \label{eq:relation}
+  \frac{t}{t_0} = \frac{p}{c} \left [ 1 + \frac{f}{\mu} \left ( \alpha + d\beta
+  \right ) \right ].
+\end{equation}
+The first factor on the right-hand side of \autoref{eq:relation}, $p/c$
+represents the loss in efficiency due to having fewer processes tracking
+particles. The remaining term within the square brackets represents the loss in
+efficiency due to the necessary network communication. In this work, we will
+primarily be concerned with the communication overhead,
+\begin{equation}
+  \label{eq:overhead}
+  \Delta_s = \frac{f}{\mu} \left ( \alpha + d\beta \right ).
+\end{equation}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Parameter Sensitivity}
+\subsection{Model Refinements}
 
-The previous test cases~\cite{jcp-romano-2013} were targeted at depletion
-analysis of the Monte Carlo performance benchmark~\cite{mc-hoogenboom-2011} on
-two modern supercomputers: the Titan Cray XK7 at ORNL and Intrepid Blue Gene/P
-at ANL. In a depletion simulation, six reaction rates for each nuclide must be
-tallied each time a particle track crosses fuel. Furthermore, it is necessary to
+In the previous work by Romano et al.~\cite{jcp-romano-2013}, estimates of the
+tally server parameters were made by analyzing a hypothetical depletion
+simulation of the Monte Carlo Performance Benchmark~\cite{mc-hoogenboom-2011} on
+two target supercomputers: the Titan Cray XK7 at Oak Ridge National Laboratory
+and Intrepid Blue Gene/P at Argonne National Laboratory. For the sake of
+simplicity, some of the assumptions made in estimating these parameters were not
+conservative. We now re-visit those assumptions to develop more realistic
+estimates to determine what effect, if any, they have on the expected
+performance of the tally server algorithm on a modern supercomputer.
+
+\subsubsection{Target Model}
+
+Rather than look at the Monte Carlo Performance Benchmark, which contains many
+unrealistic simplifications (e.g., no fuel enrichment zoning and no control
+rods), we have chosen as our target problem the BEAVRS PWR benchmark
+model~\cite{mc-horelik-2013}. This model includes accurate enrichment loadings,
+burnable absorber patterns, and control bank positions as well as
+faithfully-modeled axial grid spacers, core baffle structures, neutron shield
+panel structures, and relevant core internals. The use of a different model will
+have an impact on $\mu$ and $f$. For Mira Blue Gene/Q, the particle tracking
+rate for the BEAVRS benchmark is about $1/\mu = \SI{69}{particle/\second}$. This
+very similar to the particle tracking rate for the Monte Carlo performance
+benchmark on Blue Gene/P, and the number of tracks in fuel is virtually the same
+at $f = 21$. Assuming the same physical quantities need to be tallied, $d$ will
+not change. As in our previous work~\cite{jcp-romano-2013}, a range of $d$ will
+be investigated.
+
+\subsubsection{Annular Regions in Fuel}
+
+In a depletion simulation, six reaction rates for each nuclide must be tallied
+each time a particle track crosses fuel. Furthermore, it is necessary to
 subdivide fuel regions into annular segments since spatial self-shielding will
 result in the outer part of a fuel pin depleting faster than the inner part. The
-impact of this subdivision of the fuel on $f$ and $\mu$ was not previously
+impact of this subdivision of the fuel on $f$ and $\mu$ has not previously been
 accounted for. With an increasing number of subdivisions, the number of events
 that will result in contributions to tallies will increase. At the same time,
 the time to simulate a single particle will increase since there will be more
@@ -99,13 +200,10 @@ To explicitly determine the effect of fuel subdivision on $f$ and $\mu$, a
 series of simulations were run using the OpenMC Monte Carlo
 code~\cite{ane-romano-2013} on the BEAVRS PWR benchmark
 model~\cite{mc-horelik-2013} varying the number of annular regions in the fuel
-from 1 to 10. The benchmark model includes accurate enrichment loadings,
-burnable absorber patterns, and control bank positions as well as
-faithfully-modeled axial grid spacers, core baffle structures, neutron shield
-panel structures, and relevant core internals. \autoref{fig:events} shows the
-dependence of $f$ on the number of annular regions. While not intuitively
-obvious, this figure demonstrates that the number of tracks is directly
-proportional to the number of annular regions.
+from 1 to 10.  \autoref{fig:events} shows the dependence of $f$ on the number of
+annular regions. While not intuitively obvious \emph{a priori}, this figure
+demonstrates that the number of tracks in fuel is directly proportional to the
+number of annular regions.
 \begin{figure}[htb]
   \centering
   \includegraphics[width=3.0in]{events}
@@ -119,7 +217,11 @@ sections must be calculated. This is true even if the particle hasn't changed
 energy. Thus, as the number of annular segments in fuel increases, the
 calculation time will increase due predominantly to the extra cross section
 evaluations. \autoref{fig:time} shows the dependence of $\mu$ on the number of
-annular regions.
+annular regions as measured by the OpenMC Monte Carlo code on an Intel Core i5
+Processor. While the relative simulation time time also appears to increase
+linearly with the number of annular regions, it is not directly proportional
+like the number of tracks since only a fraction of the simulation time is spent
+tracking particles in fuel.
 \begin{figure}[b]
   \centering
   \includegraphics[width=3.0in]{time}
@@ -128,40 +230,356 @@ annular regions.
   \label{fig:time}
 \end{figure}
 
-We see that $f$ is directly proportional to the number of annular regions,
-whereas $\mu$ increases only slightly. Thus, the tally server overhead based on
-\eqref{eq:delta} will increase almost in direct proportion to the number of
-annular regions. \autoref{fig:model} shows the predicted overhead on the Titan
+\subsubsection{Network Interconnect}
+
+For the present analysis, rather than looking at the Titan Cray XK7 or Intrepid
+Blue Gene/P supercomputers, our target architecture is the Mira Blue Gene/Q
+supercomputer at Argonne National Laboratory. Mira has 48 racks, each with 1024
+nodes containing a 16-core PowerPC A2 processor for a total of 768,432 processor
+cores. More importantly, the Blue Gene/Q network interconnect utilizes a 5D
+torus and has lower latency and high bandwidth than the interconnect used for
+Blue Gene/P. The nearest-neighbor MPI latency has been observed to be about
+\SI{2.0}{\us}~\cite{hammond-2012} and the maximum-hop latency is about
+\SI{3.0}{\us}~\cite{kumaran-2012}. Rather than use either one of these figures,
+we will assume an average latency of $\alpha = \SI{2.5}{\us}$. The internode
+single link bandwidth is about
+\SI{1.8}{\giga\byte/\second}~\cite{kumaran-2012}. Consequently, we will use
+$\beta = \SI{5.55e-10}{\second/byte}$. \autoref{tab:parameters} gives a summary
+of the parameters used in the model predictions for the tally server overhead as
+well as those used in our previous work~\cite{jcp-romano-2013}.
+\begin{table}[htb]
+  \caption{Parameters used for tally server overhead model}
+  \label{tab:parameters}
+  \begin{tabular}{ c l c c }
+    \toprule
+    Parameter & Description & Intrepid & Mira \\
+    \midrule
+    $\alpha$ & Latency (s) & \num{3.53e-6} & \num{2.5e-6} \\
+    $\beta$ & Bandwidth (s/byte) & \num{2.60e-9} & \num{5.55e-10} \\
+    $1/\mu$ & Particles/second & 76 & 69 \\
+    $d$ & Data/event (bytes) & 0 -- 15,360 & 0 -- 15,360 \\
+    $f$ & Events/particle & 21 & 21--213 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsubsection{Predicted Overhead}
+
+As discussed earlier, the increase in simulation time when using tally servers
+can be attributed to 1) having fewer processors tracking particles and 2)
+network communication. The first factor that increases the simulation time is
+known and is simply determined by the user's choice of $p$, $c$, and $s$. Thus
+we will evaluate only the overhead from network communication as given in
+\autoref{eq:overhead}.
+
+In the previous section, we demonstrated that when subdividing the fuel pins
+into annular regions, the number of tallying events per particle $f$ is directly
+proportional to the number of annular regions, whereas $\mu$ increases only
+slightly. Thus, the communication overhead based on \eqref{eq:overhead} will
+increase almost in direct proportion to the number of annular
+regions. \autoref{fig:model} shows the predicted overhead on the Mira
 supercomputer as a function of $d$ for varying numbers of annular regions based
 on the results in \autoref{fig:events} and \autoref{fig:time}. The upper limit
 on $d$ is 15,360 bytes, the amount of tally data for six reaction rates in each
-of 320 nuclides within a material. We have used a latency of $\alpha = 2.0 \cdot
-10^{-6} \unit{s}$ and an inverse bandwidth of $\beta = 2.5 \cdot 10^{-10}
-\unit{s/byte}$. The particle tracking rate with one region in the fuel is $1/\mu
-= 140 \unit{particle/s}$.
+of 320 nuclides within a material. The latency and bandwidth of the interconnect
+were taken from \autoref{tab:parameters}. Even when 10 annular regions in the
+fuel are modeled, the maximum predicted communication overhead is still under
+20\%.
 \begin{figure}[htb]
   \centering
   \includegraphics[width=3.3in]{model}
-  \caption{Estimated tally server overhead on the Titan Cray XK7 supercomputer
+  \caption{Estimated tally server overhead on the Mira Blue Gene/Q supercomputer
     as a function of the number of annular regions.}
   \label{fig:model}
+\end{figure}
+
+\subsubsection{End-of-batch Accumulation}
+\label{sec:end-of-batch}
+
+One aspect of the algorithm that was not previously accounted for in the model
+of overhead is the accumulation of tallies at the end of a batch. For
+statistical purposes, after a set of $N$ neutrons are simulated, the accumulated
+score for each tally random variable is added to a running sum, and the square
+of the accumulated value is added to a sum of squares. These sums enable the
+sample variance to be calculated at the end of the simulation. When a tally
+server algorithm is used, the task of incrementing these two sums is shifted
+from the compute processors to the servers. Said another way, the total amount
+of work the compute processes must perform is reduced slightly. As a result, the
+reduced work can partially or completely negate the network communication
+overhead.
+
+To model this effect, we break up the average time to simulate $N$ particles
+into two components, $N\mu = N\mu_t + \mu_b$, where $\mu_t$ is the average time
+to transport a particle and $\mu_b$ is the average time to calculate sums and
+sums-of-squares. Since $\mu_b$ is directly proportional to the total number of
+tally scores, which in turn is typically proportional to $d$, we can express it
+as $\mu_b = \mu_b' d$. Without tally servers, the total time to simulate $N$
+particles on $p$ processors becomes
+\begin{equation}
+  \label{eq:time-without-mod}
+  t_0 = \frac{N\mu_t + \mu_b' d}{p}.
+\end{equation}
+When tally servers are used, the time spent incrementing the sums is offloaded
+to the servers. Thus, the total tracking time on $c$ compute processes is
+\begin{equation}
+  \label{eq:time-with-mod}
+  t_c = \frac{N\mu_t}{c}
+\end{equation}
+As before, when we combine \autoref{eq:time-without-mod},
+\autoref{eq:time-with-mod}, and \autoref{eq:time-send}, we obtain an expression
+relating the simulation time with and without tally servers:
+\begin{equation}
+  \label{eq:relation-mod}
+  \frac{t}{t_0} = \frac{p}{c} \left [ \frac{\mu_t + f \left ( \alpha + d\beta
+      \right )}{\mu_t + \frac{\mu_b' d}{N}} \right ].
+\end{equation}
+The communication overhead, defined earlier as the bracketed term minus unity,
+now includes a term in the denominator that will increase with $d$:
+\begin{equation}
+  \label{eq:overhead-mod}
+  \Delta_s = \frac{\mu_t + f \left ( \alpha + d\beta \right )}{\mu_t +
+    \frac{\mu_b' d}{N}} - 1.
+\end{equation}
+According to \autoref{eq:overhead-mod}, it is possible for the communication
+overhead to be negative if $Nf ( \alpha + d\beta ) < \mu_b' d$. If $d$ is
+sufficiently large that the latency is negligible ($\alpha \approx 0$), then the
+condition for negative overhead becomes $Nf\beta < \mu_b'$. While this condition
+no longer depends on $d$, $\mu_b'$ can still increase if the total number of
+tally score bins is increased (e.g., by refining a mesh over which scores are
+being tallied). \autoref{fig:model-negative} shows the predicted overhead on the
+Mira supercomputer as a function of $d$ for the original model in
+\autoref{eq:overhead} and the modified model in \autoref{eq:overhead-mod}. The
+parameters $\mu_t$, $\alpha$, and $\beta$ are all from \autoref{tab:parameters}
+and it was assumed that $\mu_b'/N = \SI{50}{\nano\second/byte}$. This value was
+chosen merely to demonstrate that negative overhead is possible and that
+$\mu_b'$ need not be exceedingly large. For small values of $d$, the overhead is
+dominated by the latency term. For larger values of $d$, \autoref{eq:overhead}
+results in an increasing overhead due to the bandwidth term whereas
+\autoref{eq:overhead-mod} results in decreasing overhead since $Nf (\alpha +
+d\beta) < \mu_b' d$.
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=3.3in]{model_negative}
+  \caption{Estimated tally server overhead accounting for accumulation.}
+  \label{fig:model-negative}
+\end{figure}
+
+To summarize, there are two key takeaways:
+\begin{enumerate}
+\item Negative overhead is possible due to offloading the incrementing of tally
+  sums and sums-of-squares to the tally servers and is more likely to occur when
+  a large number of quantities are being tallied.
+\item In practice, the beneficial effect of offloading this operation may be
+  masked by large $N$. Particularly in reactor simulations where it is expected
+  that a single batch of neutrons may exceed one billion neutrons, it is
+  unlikely that negative overhead could be achieved.
+\end{enumerate}
+
+The foregoing analysis has thus far assumed that network communication is
+blocking. However, if non-blocking communication is used, the communication
+operations may overlap with computation. In the best case scenario, the
+non-blocking sends from compute processes would return instantaneously implying
+that $t_s = 0$. This in turn would imply that
+\begin{equation}
+  \label{eq:overhead-nb}
+  \Delta_s = \frac{\mu_t}{\mu_t + \frac{\mu_b' d}{N}} - 1 = -\frac{\mu_b'
+    d}{N\mu_t + \mu_b' d}.
+\end{equation}
+We see here that with non-blocking communication, negative overhead is possible
+regardless of the size of $N$.
+
+While non-blocking communication may reduce the network communication overhead
+at the sender to a level that is negligible or even negative, it's important to
+keep in mind that the time to complete a batch of neutrons is still limited by
+the lesser of the time the compute processes require to transport the particles
+and the time the tally servers require to accumulate tallies. The latter time is
+constrained in the sense that an excessively large support ratio, $c/s$, would
+result in network contention at the tally servers. For the tally server, there
+is no computation to be performed and thus no opportunity to overlap
+communication and computation---handling communication is the sole purpose of
+the server. In light of this, the latency and bandwidth of the network are still
+crucial parameters that have a bearing on the feasibility of the tally server
+algorithm.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Results}
+\label{sec:results}
+
+A complete implementation of the tally server algorithm in the OpenMC Monte
+Carlo code was previously described by Romano et al.~\cite{jcp-romano-2013}. The
+initial implementation, which was based on blocking communication, was tested
+over a wide range of parameters on two supercomputers: the Titan Cray XK7
+supercomputer at ORNL and the Intrepid Blue Gene/P supercomputer at ANL. It was
+argued based on the performance model that in the limit of an optimal support
+ratio, the use of non-blocking communication could reduce the total overhead by
+a factor of two, but such an implementation was never tested. Since then, a
+tally server algorithm based on non-blocking communication has been implemented
+in a branch of OpenMC.
+
+The performance model developed in \autoref{sec:model} depends on a variety of
+parameters. For our target system, the Mira Blue Gene/Q supercomputer, $\alpha$,
+$\beta$, and $\mu$ are constant and can be determined based on measured data as
+previously discussed. The remaining parameters are manipulated by varying the
+definition of the tallies and the job parameters. To fully test the performance
+of the non-blocking tally server implementation, a parameter study was performed
+that covers a range of the parameters $p$, $s$, and $d$. For the present work,
+we have focused specifically on the dependence of the communication overhead on
+$d$ for varying support ratios $c/s$, total number of processors $p$, and a
+fixed $f$. As expressed in \autoref{eq:overhead-mod}, we do not expect the
+overhead to vary with either the support ratio or the total number of
+processors---nevertheless we have chosen to include them as parameters since any
+limitation to the scalability of the algorithm is likely to show up as a trend
+with $p$ or $c/s$.
+
+To begin, a number of baseline simulations of the BEAVRS benchmark were run
+without tally servers to determine the dependence of $\mu_t$ on $d$. These
+simulations were run on Mira with 16 processors and a total of 32,000 particles
+per batch. Ten batches were run both without tallies (referred to as
+\emph{inactive batches}) and with tallies (\emph{active batches}). For each
+case, a tally was set up with a mesh filter and a second filter to match only
+events within the fuel volume. Six reaction rates were tallied for varying
+numbers of nuclides, starting with 5 nuclides and doubling the number of
+nuclides up to 320. Thus, the amount of data sent at each event varied from 240
+bytes up to 15.36 kilobytes. \autoref{fig:mu-d} shows the observed dependence of
+$\mu_t$ on $d$ normalized to the $d=5$ case.
+\begin{figure}
+  \centering
+  \includegraphics[width=3.3in]{baseline}
+  \caption{Observed dependence of $\mu_t$ on the amount of data tallied, $d$, on
+    Mira.}
+  \label{fig:mu-d}
+\end{figure}
+
+The parameter study using tally servers on the Intrepid supercomputer consisted
+of two sets of 168 simulations with each combination of the following
+parameters: $p = 16,32,64,128,256,512$, $c/s = 1,3,7,15$, and $d = 240, 480,
+960, 1920, 3840, 7680, 15360$. The first set was performed with blocking
+communication between the compute processes and the servers and the second set
+with non-blocking communication. Like the baseline cases, the runs with tally
+servers had 10 inactive batches, 10 active batches, and $N/p = 500$. The
+effective overhead from tally servers was determined in the following
+manner. First, the expected overhead due to looking up cross sections during
+tallying was subtracted from the active batch time based on the results from the
+baseline cases. Then, the adjusted simulation time in active batches was divided
+by the inactive batch time to determine the overhead in active batches. The
+result is a quantity that is a proxy for the communication overhead,
+$\Delta_s$. One should take note that it does not account for the fact that we
+have fewer compute processes.  The overhead calculated in this manner for $c/s =
+1$, $c/s = 3$, $c/s = 7$, and $c/s = 15$ is shown in \autoref{fig:results-mira-r1},
+\autoref{fig:results-mira-r3}, \autoref{fig:results-mira-r7}, and
+\autoref{fig:results-mira-r15}, respectively.
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=3.3in]{mira_r1}
+  \caption{Observed tally server overhead on ANL Mira with 1 compute process per
+    server.}
+  \label{fig:results-mira-r1}
+\end{figure}
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=3.3in]{mira_r3}
+  \caption{Observed tally server overhead on ANL Mira with 3 compute process per
+    server.}
+  \label{fig:results-mira-r3}
+\end{figure}
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=3.3in]{mira_r7}
+  \caption{Observed tally server overhead on ANL Mira with 7 compute process per
+    server.}
+  \label{fig:results-mira-r7}
+\end{figure}
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=3.3in]{mira_r15}
+  \caption{Observed tally server overhead on ANL Mira with 15 compute process per
+    server.}
+  \label{fig:results-mira-r15}
+\end{figure}
+
+Compared to our previous study, the observed communication overhead is lower for
+large $d$ primarily due to the higher bandwidth on Mira compared to Titan or
+Intrepid. In all cases, the communication overhead is less than 6\%, whereas for
+Intrepid and Titan it had exceeded 30\% in some cases. A more striking feature
+in all the results is the fact that all non-blocking cases exhibit a clear trend
+of increasingly negative overhead for large $d$. Based on the discussion in
+\autoref{sec:end-of-batch}, this is a direct consequence of the fact that the
+incrementing of tally sums and sums-of-squares has been offloaded to the tally
+servers. Had the choice of $N$ been larger, this effect would have been
+mitigated. That negative overhead could be observed at all is a testament to the
+inherently fast network interconnect on Mira resulting in little overhead,
+especially when non-blocking semantics are used.
+
+It is also of interest to observe the behavior of the tally server overhead with
+increasing numbers of total processors. According to the performance model, the
+overhead should not depend on the number of processors
+used. \autoref{fig:results-mira-cs} shows the overhead plotted as a function of
+$p$ for cases with $d=15360$. For the simulations where blocking communication
+was used, there is no clear trend with $p$. The overhead when using 16, 64, and
+128 total processor cores was consistently positive whereas the overhead turned
+negative for 32, 256, and 512 total processors. Despite the odd behavior with
+changes in $p$, there was little variation as a function of the support ratio,
+$c/s$. When non-blocking communication was used, the overhead was consistently
+negative for all cases.
+\begin{figure}[htb]
+  \centering
+  \includegraphics[width=3.3in]{mira_cs}
+  \caption{Observed tally server overhead on ANL Mira as a function of $p$ with
+    $d=15360$.}
+  \label{fig:results-mira-cs}
 \end{figure}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Conclusions}
 
-In this paper, we have demonstrated the effect of fuel subdivision on the number
-of particle tracks and calculation rate on a PWR benchmark problem using the
-OpenMC Monte Carlo code. In the context of using a tally server data
-decomposition algorithm, it was shown that the overhead due to tally servers
-will increase linearly with the number of annular regions in fuel. Nevertheless,
-even with 10 regions, the predicted overhead of using tally servers is less than
-20\% on the Titan supercomputer over a wide parameter regime.
+In the present work, we have made further inroads towards evaluating the
+potential for the tally server data decomposition algorithm to be applied to
+Monte Carlo simulations of light-water reactors. The two major contributions are
+1) improvements in the theoretical performance model, and 2) a thorough
+parameter space study looking at the impact of blocking vs. non-blocking
+communication in a real tally server implementation in the OpenMC Monte Carlo
+code.
 
-The full paper will also discuss the impact of survival biasing and weight
-cutoffs on $f$ and $\mu$, the use of non-blocking communication in the tally
-server implementation in OpenMC, and tests of the tally server algorithm using
-tens to hundreds of thousands of processors.
+In our previous work, the Monte Carlo performance benchmark, otherwise known as
+the Hoogenboom-Martin benchmark, was used as the basis for evaluating tally
+server performance model parameters. That benchmark model was overly simplified,
+and the recent introduction of a more realistic PWR benchmark, BEAVRS, has
+allowed us to re-evaluate the model parameters. The change of benchmark models
+did not have a significant effect on any model parameters. The simplified
+theoretical model that was developed previously has also been refined to better
+predict the performance of a realistic reactor simulation. Most importantly, the
+effect of fuel subdivision on the number of particle tracks and calculation rate
+for the BEAVRS benchmark was quantified using OpenMC. It was shown that the
+predicted overhead due to tally servers increases linearly with the number of
+annular regions in fuel. Nevertheless, even with 10 regions, the predicted
+overhead of using tally servers is less than 20\% on the Mira supercomputer over
+a wide parameter regime. Thus, the subdivision of fuel pins into unique
+depletion regions should not be a major impediment towards achieving
+high-fidelity simulations that rely on tally servers.
+
+A modified implementation of the tally server algorithm in OpenMC using
+non-blocking communication was tested on the Mira supercomputer along with the
+original implementation based on blocking communication. The observed
+communication overhead was reduced when using non-blocking communication as
+previously predicted. Furthermore, the communication overhead decreased to the
+point that it was negative as the amount of data being sent at each tally event
+increased. This was attributed to the accumulation of tally scores at the end of
+a statistical batch being offloaded to the tally servers rather than being
+performed by the compute processes. It is important to recognize that the
+negative overhead observed is a consequence of the particular choice of run
+parameters and would be unlikely to occur in a hypothetical reactor depletion
+simulation where the total number of particles per statistical batch is
+necessarily very large, thus reducing the important of any end-of-batch
+operations.
+
+The basic conclusions of our previous work, i.e., that the tally server
+algorithm is a successful approach to circumventing on-node memory constraints
+associated with detailed Monte Carlo reactor simulations, in unchanged in light
+of the evidence presented in this work. While the tally server algorithm could
+already be employed on the world's fastest supercomputers today, the need for an
+extremely fast network interconnect means that it may not be amenable for use on
+commodity computer architectures that would more likely be used by scientists
+for day-to-day work.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section*{Acknowledgments}

@@ -5,7 +5,9 @@ manuscript = snamc-tallyserver
 latexopt = -halt-on-error -file-line-error
 
 # List of images to include
-images = events.pdf time.pdf model.pdf
+images = baseline.pdf events.pdf mira_cs.pdf mira_r1.pdf mira_r3.pdf \
+    mira_r7.pdf mira_r15.pdf mira_cs.pdf model_negative.pdf model.pdf \
+    time.pdf
 
 #=================================================================
 # Generate PDF of manuscript using PdfLaTeX

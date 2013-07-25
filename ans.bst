@@ -963,7 +963,7 @@ FUNCTION {format.in.ed.booktitle}
 FUNCTION {format.proceedings.booktitle}
 { booktitle empty$
     { "" }
-    { "Proc. " booktitle * emphasize }
+    { booktitle emphasize }
   if$
 }
 
