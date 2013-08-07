@@ -34,12 +34,12 @@
   server algorithm to better predict the performance of a realistic reactor
   simulation using Monte Carlo. The impact of subdividing fuel into annular
   segments on parameters of the performance model is evaluated and shown to
-  result in a predicted overhead of less than 20\% for the BEAVRS PWR benchmark
-  on the Mira Blue Gene/Q supercomputer. Additionally, a parameter space study
-  was performed comparing implementations of the tally server algorithm in the
-  OpenMC Monte Carlo code using blocking and non-blocking communication. The use
-  of non-blocking communication was shown to reduce the communication overhead
-  relative to blocking communication and can even result in negative overhead.}
+  result in a predicted overhead of less than 20\% for a PWR benchmark on the
+  Mira Blue Gene/Q supercomputer. Additionally, a parameter space study is
+  performed comparing tally server implementations using blocking and
+  non-blocking communication. Non-blocking communication is shown to reduce the
+  communication overhead relative to blocking communication, in some cases
+  resulting in negative overhead.}
 
 \keywords{Monte Carlo, data decomposition, tally server, LWR, OpenMC}
 
@@ -53,15 +53,16 @@ be highly scalable~\cite{ane-romano-2013}, but does not lend itself to problems
 where the memory requirements exceed that of a single node. For the realistic
 analysis of light-water reactors (LWRs), the memory requirements can be quite
 severe. Neutron interaction cross sections, which need to be stored for over 400
-nuclides at various temperatures, could consume up to 100 gigabytes of memory
-for a practical simulation. For a depletion calculation, the required tally
-memory could exceed 0.5 terabyte~\cite{jcp-siegel-2013}. A number of novel
-algorithms may enable simulations involving continuous temperature distributions
-to be performed using cross sections at 0 K~\cite{nse-yesilyurt-2012,
-  nse-viitanen-2012}. Two methods of decomposing tally data, and thereby
-reducing per-node memory requirements, have been proposed previously:
-\emph{domain decomposition}~\cite{jcp-siegel-2012, jcp-siegel-2013} and
-\emph{data decomposition}~\cite{trans-brown-2004}.
+nuclides at various temperatures, may consume up to 100 gigabytes of memory for
+a practical simulation.\footnote{A number of novel algorithms may ultimately
+  enable simulations involving continuous temperature distributions to be
+  performed using cross sections at 0 K~\cite{nse-yesilyurt-2012,
+    nse-viitanen-2012}} For a robust depletion calculation, the required tally
+memory is likely to exceed 0.5 terabyte~\cite{jcp-siegel-2013}. Treating
+realistic tally memory footprints thus requires some form of decomposition
+across compute nodes. Two decomposition methods have been proposed previously
+for addressing this problem: \emph{domain decomposition}~\cite{jcp-siegel-2012,
+  jcp-siegel-2013} and \emph{data decomposition}~\cite{trans-brown-2004}.
 
 In a recent paper~\cite{jcp-romano-2013}, Romano et al. demonstrate an
 implementation of data decomposition via a tally server algorithm and show that
@@ -69,21 +70,21 @@ it offers a viable means of performing full core light-water reactor simulations
 via Monte Carlo. A theoretical model was developed to predict the performance of
 a simulation using the tally server algorithm relative to a simulation based on
 full memory replication. The model depends on a number of machine-, code-, and
-problem-dependent parameters. In the present work, we revisit the derivation of
+problem-specific parameters. In the present work, we revisit the derivation of
 the expected performance of the tally server and make refinements to a number of
 assumptions and parameters. The goal is to develop a more realistic expectation
-for the performance of of the tally server algorithm when applied to simulation
-of LWR problems.
+for the performance of of the tally server algorithm specifically when applied
+to simulation of LWR problems.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Tally Server Model}
 \label{sec:model}
 
-During a Monte Carlo simulation, estimates of physical parameters, referred to
-as \emph{tallies} are made by keeping running sums of scores from events such as
-collisions or particle tracks. Normally, tallies are stored in local
-memory. Synchronization between processors is typically performed only after
-simulating a predetermined number of particles, referred to as a
+During a Monte Carlo simulation, estimates of integral physical parameters,
+referred to as \emph{tallies}, are made by keeping running sums of scores from
+events such as collisions or particle tracks. Normally, tallies are stored in
+local memory. Synchronization between processors is typically performed only
+after simulating a predetermined number of particles, referred to as a
 \emph{batch}. However, since tally data is not needed for determining the random
 walk of a particle, it can be stored remotely.
 
@@ -98,8 +99,9 @@ tally accumulation is performed on the server, the compute processes do not need
 to store the tallies in memory (other than meta-data describing the tally).
 
 The goal of the analysis here is to develop a model for for the expected time to
-simulate $N$ particles using the tally server algorithm relative to a simulation
-with no data decomposition. To that end, we first define a number of parameters:
+simulate $N$ particles using the tally server algorithm relative to a classic
+simulation with no data decomposition. To that end, we first define a number of
+parameters:
 \begin{align*}
   \mu &= \text{average time to simulate a single particle}, \\
   f &= \text{number of tallying events per particle}, \\
@@ -177,7 +179,7 @@ burnable absorber patterns, and control bank positions as well as
 faithfully-modeled axial grid spacers, core baffle structures, neutron shield
 panel structures, and relevant core internals. The use of a different model will
 have an impact on $\mu$ and $f$. For Mira Blue Gene/Q, the particle tracking
-rate for the BEAVRS benchmark is about $1/\mu = \SI{69}{particle/\second}$. This
+rate for the benchmark is about $1/\mu = \SI{69}{particle/\second}$. This
 very similar to the particle tracking rate for the Monte Carlo performance
 benchmark on Blue Gene/P, and the number of tracks in fuel is virtually the same
 at $f = 21$. Assuming the same physical quantities need to be tallied, $d$ will
@@ -198,12 +200,11 @@ surface crossings, re-evaluation of cross sections, tallying events, etc.
 
 To explicitly determine the effect of fuel subdivision on $f$ and $\mu$, a
 series of simulations were run using the OpenMC Monte Carlo
-code~\cite{ane-romano-2013} on the BEAVRS PWR benchmark
-model~\cite{mc-horelik-2013} varying the number of annular regions in the fuel
-from 1 to 10.  \autoref{fig:events} shows the dependence of $f$ on the number of
-annular regions. While not intuitively obvious \emph{a priori}, this figure
-demonstrates that the number of tracks in fuel is directly proportional to the
-number of annular regions.
+code~\cite{ane-romano-2013} on the BEAVRS PWR benchmark model varying the number
+of annular regions in the fuel from 1 to 10.  \autoref{fig:events} shows the
+dependence of $f$ on the number of annular regions. While not intuitively
+obvious \emph{a priori}, this figure demonstrates that the number of tracks in
+fuel is directly proportional to the number of annular regions.
 \begin{figure}[htb]
   \centering
   \includegraphics[width=3.0in]{events}
@@ -217,11 +218,11 @@ sections must be calculated. This is true even if the particle hasn't changed
 energy. Thus, as the number of annular segments in fuel increases, the
 calculation time will increase due predominantly to the extra cross section
 evaluations. \autoref{fig:time} shows the dependence of $\mu$ on the number of
-annular regions as measured by the OpenMC Monte Carlo code on an Intel Core i5
-Processor. While the relative simulation time time also appears to increase
-linearly with the number of annular regions, it is not directly proportional
-like the number of tracks since only a fraction of the simulation time is spent
-tracking particles in fuel.
+annular regions as measured by OpenMC running on an Intel Core i5
+Processor. While the relative simulation time also increases linearly with the
+number of annular regions, unlike the number of track the two are not directly
+proportional since only a fraction of the simulation time is spent tracking
+particles in fuel.
 \begin{figure}[b]
   \centering
   \includegraphics[width=3.0in]{time}
@@ -240,9 +241,8 @@ cores. More importantly, the Blue Gene/Q network interconnect utilizes a 5D
 torus and has lower latency and high bandwidth than the interconnect used for
 Blue Gene/P. The nearest-neighbor MPI latency has been observed to be about
 \SI{2.0}{\us}~\cite{hammond-2012} and the maximum-hop latency is about
-\SI{3.0}{\us}~\cite{kumaran-2012}. Rather than use either one of these figures,
-we will assume an average latency of $\alpha = \SI{2.5}{\us}$. The internode
-single link bandwidth is about
+\SI{3.0}{\us}~\cite{kumaran-2012}. In our analyses we assume an average latency
+of $\alpha = \SI{2.5}{\us}$. The internode single link bandwidth is about
 \SI{1.8}{\giga\byte/\second}~\cite{kumaran-2012}. Consequently, we will use
 $\beta = \SI{5.55e-10}{\second/byte}$. \autoref{tab:parameters} gives a summary
 of the parameters used in the model predictions for the tally server overhead as
@@ -305,7 +305,7 @@ sample variance to be calculated at the end of the simulation. When a tally
 server algorithm is used, the task of incrementing these two sums is shifted
 from the compute processors to the servers. Said another way, the total amount
 of work the compute processes must perform is reduced slightly. As a result, the
-reduced work can partially or completely negate the network communication
+reduced work may partially or completely negate the network communication
 overhead.
 
 To model this effect, we break up the average time to simulate $N$ particles
