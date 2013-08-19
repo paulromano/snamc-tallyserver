@@ -103,11 +103,11 @@ simulate $N$ particles using the tally server algorithm relative to a classic
 simulation with no data decomposition. To that end, we first define a number of
 parameters:
 \begin{align*}
-  \mu &= \text{average time to simulate a single particle}, \\
+  \mu &= \text{particle tracking rate [1/second]}, \\
   f &= \text{number of tallying events per particle}, \\
-  d &= \text{bytes of tally data sent at each event}, \\
-  \alpha &= \text{effective application-level network latency}, \\
-  \beta &= \text{effective application-level inverse network bandwidth}
+  d &= \text{tally data sent per event [bytes]}, \\
+  \alpha &= \text{application-level latency [seconds]}, \\
+  \beta &= \text{application-level inverse bandwidth [seconds/byte].}
 \end{align*}
 The latency and inverse bandwidth are determined by the network interconnect;
 $f$, $\mu$, and $d$ will depend on the machine hardware as well as the code
